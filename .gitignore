@@ -1,0 +1,10 @@
+*.pth
+*.zip
+*.pyc
+outputs/*
+*.ipynb
+*.mp4
+results/*
+sol_5_mcs_1/*
+testvideo/*
+annotation/*
