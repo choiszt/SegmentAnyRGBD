@@ -8,10 +8,15 @@ import imageio
 from tqdm import tqdm
 import os
 import cv2
-import sys;sys.path.append("/mnt/ve_share/liushuai/SegmentAnyRGBD-main")
+import sys;sys.path.append("/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD")
+module_path = os.path.abspath('/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD/pinmask.py')
+module_dir = os.path.dirname(module_path)
+sys.path.append(module_dir)
+from pinmask import maskpinner
 from pytorch3d.structures import Pointclouds
 from pytorch3d.renderer import look_at_view_transform
-import sys;sys.path.append("/mnt/ve_share/liushuai/SegmentAnyRGBD-main/segment_anything/")
+import sys;sys.path.append("/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD/segment_anything")
+sys.path.append("/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD/open_vocab_seg/utils")
 from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.visualizer import ColorMode, Visualizer
@@ -20,6 +25,7 @@ from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from .pcd_rendering import unproject_pts_pt, get_coord_grids_pt, create_pcd_renderer
+
 import time
 
 
@@ -190,13 +196,14 @@ class VisualizationDemo(object):
         
         return predictions, vis_output
     
-    def run_on_image_sam(self, path, class_names, depth_map_path):
+    def run_on_image_sam(self, path, class_names, depth_map_path,maskbatch_input):
         #---------initialized------------#
         sam_checkpoint = "sam_vit_h_4b8939.pth"
         model_type = "vit_h"
         device = "cuda"
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
         sam.to(device=device)
+        pinner=maskpinner()#initialized pinner
         mask_generator_2 = SamAutomaticMaskGenerator(
             model=sam,
             points_per_side=64,
@@ -206,25 +213,29 @@ class VisualizationDemo(object):
             crop_n_points_downscale_factor=0,
             min_mask_region_area=100,  # Requires open-cv to run post-processing
         )
-        for imagepath,per_depth_map_path in tqdm(zip(path,depth_map_path)):
+        colordict=pinner.colordict(maskbatch_input)#initialized colordict
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        name=path[0].split('/')[-3]
+        out = cv2.VideoWriter(f'/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD/results/stuffvideo/{name}.mp4', fourcc, 5, (1280,800))
+        for imagepath,per_depth_map_path,maskpath in tqdm(zip(path,depth_map_path,maskbatch_input)):
             start_time = time.time()
             # use PIL, to be consistent with evaluation
             image = read_image(imagepath, format="BGR")
-            predictions = self.predictor(image, class_names) #
+            predictions = self.predictor(image, class_names) #OVseg
             # Convert image from OpenCV BGR format to Matplotlib RGB format.
             image = image[:, :, ::-1]
-            visualizer_rgb = OVSegVisualizer(image, self.metadata, instance_mode=self.instance_mode, class_names=class_names)
+            # visualizer_rgb = OVSegVisualizer(image, self.metadata, instance_mode=self.instance_mode, class_names=class_names)
             visualizer_depth = OVSegVisualizer(image, self.metadata, instance_mode=self.instance_mode, class_names=class_names)
-            visualizer_rgb_sam = OVSegVisualizer(image, self.metadata, instance_mode=self.instance_mode, class_names=class_names)
-            visualizer_depth_sam = OVSegVisualizer(image, self.metadata, instance_mode=self.instance_mode, class_names=class_names)
-            print("SAM: rendering RGBdata...")
-            masks_rgb = mask_generator_2.generate(image) #sam
-            masks_rgb = sorted(masks_rgb, key=(lambda x: x['area']), reverse=True)
+            # visualizer_rgb_sam = OVSegVisualizer(image, self.metadata, instance_mode=self.instance_mode, class_names=class_names)
+            # visualizer_depth_sam = OVSegVisualizer(image, self.metadata, instance_mode=self.instance_mode, class_names=class_names)
+            # print("SAM: rendering RGBdata...")
+            # masks_rgb = mask_generator_2.generate(image) #sam
+            # masks_rgb = sorted(masks_rgb, key=(lambda x: x['area']), reverse=True)
             d = self.getdepth(per_depth_map_path) #获取depth和matrics
             d = (d - np.min(d)) / (np.max(d) - np.min(d))
             image_depth = mpl.colormaps['plasma'](d)*255
             print("SAM: rendering depthdata...")
-            masks_depth = mask_generator_2.generate(image_depth.astype(np.uint8)[:,:,:-1])
+            masks_depth = mask_generator_2.generate(image_depth.astype(np.uint8)[:,:,:-1]) #sam
             masks_depth = sorted(masks_depth, key=(lambda x: x['area']), reverse=True)
 
             if "sem_seg" in predictions:
@@ -232,17 +243,14 @@ class VisualizationDemo(object):
                 pred_mask = r.argmax(dim=0).to('cpu') #OVseg得到的是类别，sam割出来的是mask
                 pred_mask = np.array(pred_mask, dtype=np.uint8)
                 
-                pred_mask_sam_rgb = pred_mask.copy()
-                for mask in masks_rgb:#sam的mask指导ovseg的分割
-                    cls_tmp, cls_num = np.unique(pred_mask[mask['segmentation']], return_counts=True)
-                    pred_mask_sam_rgb[mask['segmentation']] = cls_tmp[np.argmax(cls_num)]#把segment的地方都搞成最大的class
-                    mask['class'] = cls_tmp[np.argmax(cls_num)] #属于第cls_tmp的类
+                # pred_mask_sam_rgb = pred_mask.copy()
+                # for mask in masks_rgb:#sam的mask指导ovseg的分割
+                #     cls_tmp, cls_num = np.unique(pred_mask[mask['segmentation']], return_counts=True)
+                #     pred_mask_sam_rgb[mask['segmentation']] = cls_tmp[np.argmax(cls_num)]#把segment的地方都搞成最大的class
+                #     mask['class'] = cls_tmp[np.argmax(cls_num)] #属于第cls_tmp的类
 
-                vis_output_rgb = visualizer_rgb.draw_sem_seg(
-                    pred_mask_sam_rgb
-                )
                 # vis_output_rgb = visualizer_rgb.draw_sem_seg(
-                #     pred_mask, alpha=1
+                #     pred_mask_sam_rgb
                 # )
 
                 pred_mask_sam_depth = pred_mask.copy()
@@ -250,25 +258,30 @@ class VisualizationDemo(object):
                     cls_tmp, cls_num = np.unique(pred_mask[mask['segmentation']], return_counts=True)
                     pred_mask_sam_depth[mask['segmentation']] = cls_tmp[np.argmax(cls_num)]
                     mask['class'] = cls_tmp[np.argmax(cls_num)]
+                pinner.getpinnedmask(pred_mask_sam_depth,maskpath)
+                pinnedimage=pinner.drawmask(colordict,imagepath)
+                out.write(pinnedimage)
+        out.release()
+        print('finish')
+            #     vis_output_depth = visualizer_depth.draw_sem_seg(
+            #         pred_mask_sam_depth
+            #     )
 
-                vis_output_depth = visualizer_depth.draw_sem_seg(
-                    pred_mask_sam_depth
-                )
-
-                vis_output_rgb_sam = visualizer_rgb_sam.draw_sam_seg(masks_rgb)
-                vis_output_depth_sam = visualizer_depth_sam.draw_sam_seg(masks_depth)
-            baseroot='/mnt/ve_share/liushuai/SegmentAnyRGBD-main/results'
-            tmplist=imagepath.split('/')
-            import os;
-            videopath=os.path.join(baseroot,tmplist[-3]) 
-            if not os.path.exists(videopath):
-                os.makedirs(videopath)
-            vis_output_rgb.save(os.path.join(videopath,tmplist[-1][-8:-4]+'_rgb.jpg'))
-            vis_output_depth.save(os.path.join(videopath,tmplist[-1][-8:-4]+'_depth.jpg'))
-            vis_output_rgb_sam.save(os.path.join(videopath,tmplist[-1][-8:-4]+'rgbSAM.jpg'))
-            vis_output_depth_sam.save(os.path.join(videopath,tmplist[-1][-8:-4]+'_depthSAM.jpg'))
-            end_time  = time.time()
-            print(f"time of {tmplist[-1][-8:-4]}:{end_time-start_time}")
+            #     # vis_output_rgb_sam = visualizer_rgb_sam.draw_sam_seg(masks_rgb)
+            #     # vis_output_depth_sam = visualizer_depth_sam.draw_sam_seg(masks_depth)
+            # baseroot='/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD/results'
+            # tmplist=imagepath.split('/')
+            # import os;
+            # # videopath=os.path.join(baseroot,tmplist[-3]) 
+            # videopath=os.path.join(baseroot,"allstuff")
+            # if not os.path.exists(videopath):
+            #     os.makedirs(videopath)
+            # # vis_output_rgb.save(os.path.join(videopath,tmplist[-1][-8:-4]+'_rgb.jpg'))
+            # vis_output_depth.save(os.path.join(videopath,tmplist[-1][-8:-4]+'_depth.jpg'))
+            # # vis_output_rgb_sam.save(os.path.join(videopath,tmplist[-1][-8:-4]+'rgbSAM.jpg'))
+            # # vis_output_depth_sam.save(os.path.join(videopath,tmplist[-1][-8:-4]+'_depthSAM.jpg'))
+            # end_time  = time.time()
+            # print(f"time of {tmplist[-1][-8:-4]}:{end_time-start_time}")
     
     def getdepth(self, depth_map_path):
         d = np.load(depth_map_path)

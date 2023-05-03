@@ -9,7 +9,8 @@ import cv2
 import tqdm
 import numpy as np
 from tools.util import *
-
+import sys;sys.path.append("/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD")
+sys.path.append("/mnt/lustre/jkyang/PSG4D/liushuai_workdir/SegmentAnyRGBD/configs")
 from detectron2.config import get_cfg
 
 from detectron2.projects.deeplab import add_deeplab_config
@@ -72,7 +73,7 @@ def get_parser():
 
 args = get_parser().parse_args()
 
-def greet_sailvos3d(rgb_input, depth_map_input, class_candidates):
+def greet_sailvos3d(rgb_input, depth_map_input, class_candidates,maskbatch_input):
     args.input = rgb_input
     args.class_names = class_candidates.split(', ')
     depth_map_path = depth_map_input
@@ -85,12 +86,16 @@ def greet_sailvos3d(rgb_input, depth_map_input, class_candidates):
 
     demo = VisualizationDemo(cfg)
     class_names = args.class_names
-    demo.run_on_image_sam(args.input, class_names, depth_map_path)
-RGBroot="/mnt/ve_share/liushuai/SegmentAnyRGBD-main/sol_5_mcs_1/images"
-depthroot="/mnt/ve_share/liushuai/SegmentAnyRGBD-main/sol_5_mcs_1/depth"
+    demo.run_on_image_sam(args.input, class_names, depth_map_path,maskbatch_input)
+RGBroot="/mnt/lustre/jkyang/PSG4D/sailvos3d/downloads/sailvos3d/family_2_mcs_2/images"
+depthroot="/mnt/lustre/jkyang/PSG4D/sailvos3d/downloads/sailvos3d/family_2_mcs_2/depth"
+maskroot="/mnt/lustre/jkyang/PSG4D/sailvos3d/downloads/sailvos3d/family_2_mcs_2/visible"
 rgbbatch_input=sorted(os.path.join(RGBroot,i) for i in os.listdir(RGBroot))
 depth_map_input=sorted(os.path.join(depthroot,i) for i in os.listdir(depthroot))
+maskbatch_input=sorted(os.path.join(maskroot,i) for i in os.listdir(maskroot))
 # rgbbatch_input=["/mnt/ve_share/liushuai/SegmentAnyRGBD-main/resources/demos/sailvos_1/000160.bmp"]
 # depth_map_input=["/mnt/ve_share/liushuai/SegmentAnyRGBD-main/UI/sailvos3d/ex1/inputs/depth_000160.npy"]
-class_candidates="person, car, motorcycle, truck, bird, dog, handbag, suitcase, bottle, cup, bowl, chair, potted plant, bed, dining table, tv, laptop, cell phone, bag, bin, box, door, road barrier, stick, lamp, floor, wall"
-greet_sailvos3d(rgbbatch_input, depth_map_input, class_candidates)
+allcate="person,bird,dog,chair,bed,door,table,sofa,pillar,lamp,bench,curtain,tv,laptop,cell phone,computer,telephone,potted plant,road barrier,picture,car,motorcycle,truck,bicycle,suitcase,bottle,cup,bowl,bag,bin,box,handbag,weapon,stick,cloth,floor,ground,wall,window,stair,fence"
+class_candidates="person, car, motorcycle, truck, bird, dog, handbag, suitcase, bottle, cup, bowl, chair, potted plant, bed, dining table, tv, laptop, cell phone, bag, bin, box, door, road barrier, stick, floor, ground, wall, window, stair, fence, grass"
+greet_sailvos3d(rgbbatch_input, depth_map_input, class_candidates,maskbatch_input)
+
